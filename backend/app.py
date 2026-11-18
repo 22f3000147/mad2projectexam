@@ -3,6 +3,7 @@ from flask import Flask, render_template, jsonify
 from config import Config
 from extensions import db, jwt
 from seed import create_admin
+from utils.helpers import ApiError
 
 
 def create_app(config_class=Config):
@@ -26,6 +27,10 @@ def create_app(config_class=Config):
     @app.route("/")
     def index():
         return render_template("index.html")
+
+    @app.errorhandler(ApiError)
+    def api_error(err):
+        return jsonify(error=err.message), err.status
 
     @app.errorhandler(404)
     def not_found(_):

@@ -1,15 +1,9 @@
 """Role-gated dashboard endpoints. Real data is added in Milestones 3-5."""
 from flask import Blueprint, jsonify, g
 from utils.auth import roles_required
-from models.constants import ROLE_ADMIN, ROLE_EXAMINER, ROLE_STUDENT
+from models.constants import ROLE_EXAMINER, ROLE_STUDENT
 
 dashboards_bp = Blueprint("dashboards", __name__)
-
-
-@dashboards_bp.get("/admin/dashboard")
-@roles_required(ROLE_ADMIN)
-def admin_dashboard():
-    return jsonify(message=f"Welcome Admin {g.current_user.full_name}")
 
 
 @dashboards_bp.get("/examiner/dashboard")

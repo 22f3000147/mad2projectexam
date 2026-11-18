@@ -1,4 +1,4 @@
-// Thin fetch wrapper: attaches JWT, normalises errors.
+
 const API = {
   async request(path, { method = 'GET', body } = {}) {
     const headers = { 'Content-Type': 'application/json' };

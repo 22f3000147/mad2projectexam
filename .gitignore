@@ -1,19 +1,19 @@
-# Python
+
 __pycache__/
 *.pyc
 venv/
 .venv/
 .env
-# SQLite / instance
+
 backend/instance/*.db
 *.sqlite3
-# Redis / Celery
+
 dump.rdb
 celerybeat-schedule*
-# Vue / Node
+
 node_modules/
 dist/
-# OS / IDE
+
 .DS_Store
 .vscode/
 .idea/

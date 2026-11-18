@@ -1,4 +1,4 @@
-// Tiny reactive auth store (no Vuex/Pinia - not allowed).
+
 const authStore = Vue.reactive({
   token: localStorage.getItem('emp_token'),
   user: JSON.parse(localStorage.getItem('emp_user') || 'null'),
