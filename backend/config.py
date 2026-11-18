@@ -12,7 +12,7 @@ class Config:
     SQLALCHEMY_DATABASE_URI = "sqlite:///" + os.path.join(BASE_DIR, "instance", "emp.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    # Pre-created admin (only ONE admin exists, created programmatically)
+   
     ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@emp.com")
     ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@123")
     ADMIN_NAME = "System Admin"

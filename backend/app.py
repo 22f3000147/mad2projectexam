@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, render_template, jsonify
 from config import Config
 from extensions import db, jwt
 from seed import create_admin
@@ -16,8 +16,20 @@ def create_app(config_class=Config):
 
     import models  
     with app.app_context():
-        db.create_all()         
+        db.create_all()          
         create_admin(app)
+
+    from routes import register_blueprints
+    register_blueprints(app)
+
+   
+    @app.route("/")
+    def index():
+        return render_template("index.html")
+
+    @app.errorhandler(404)
+    def not_found(_):
+        return jsonify(error="Not found"), 404
 
     return app
 

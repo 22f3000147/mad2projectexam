@@ -11,7 +11,7 @@ Web app where **Admin**, **Examiner** and **Student** roles can manage examinati
 cd backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python app.py          # http://localhost:5000
+python app.py         
 ```
 Default admin (created on first run): `admin@emp.com` / `Admin@123`
 

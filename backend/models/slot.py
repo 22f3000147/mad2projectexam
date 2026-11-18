@@ -35,7 +35,7 @@ class Booking(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     slot_id = db.Column(db.Integer, db.ForeignKey("examination_slots.id"), nullable=False)
-    # denormalised so the DB itself can block duplicate bookings for the same exam
+    
     examination_id = db.Column(db.Integer, db.ForeignKey("examinations.id"), nullable=False)
     booking_date = db.Column(db.DateTime, default=datetime.utcnow)
     status = db.Column(db.String(20), default=BOOKING_BOOKED, nullable=False)
@@ -46,7 +46,7 @@ class Booking(db.Model):
     evaluation = db.relationship("Evaluation", back_populates="booking", uselist=False)
 
     __table_args__ = (
-        # one ACTIVE booking per student per examination (cancelled ones don't count)
+       
         db.Index("uq_active_booking", "student_id", "examination_id", unique=True,
                  sqlite_where=text("status = 'Booked'")),
     )

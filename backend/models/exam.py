@@ -2,7 +2,7 @@ from datetime import datetime
 from extensions import db
 from models.constants import COURSE_ACTIVE, EXAM_DRAFT
 
-# Examination <-> Examiner (many-to-many: which examiners are assigned to an exam)
+
 exam_examiners = db.Table(
     "exam_examiners",
     db.Column("examination_id", db.Integer, db.ForeignKey("examinations.id", ondelete="CASCADE"), primary_key=True),
@@ -29,7 +29,7 @@ class Examination(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     course_id = db.Column(db.Integer, db.ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
     name = db.Column(db.String(150), nullable=False)
-    exam_type = db.Column(db.String(30), nullable=False)       # Viva / Practical / Project Demo / Assessment
+    exam_type = db.Column(db.String(30), nullable=False)      
     duration_minutes = db.Column(db.Integer, nullable=False)
     max_marks = db.Column(db.Integer, nullable=False)
     instructions = db.Column(db.Text)
