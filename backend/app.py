@@ -1,9 +1,10 @@
 import os
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, g
 from config import Config
 from extensions import db, jwt
 from seed import create_admin
 from utils.helpers import ApiError, close_expired_bookings
+import utils.cache 
 
 
 def create_app(config_class=Config):
@@ -31,6 +32,12 @@ def create_app(config_class=Config):
     def keep_exam_status_updated():
         if request.path.startswith("/api/") and not request.path.startswith("/api/auth/"):
             close_expired_bookings()
+
+    @app.after_request
+    def show_cache_status(response):
+        if g.get("cache"):                   
+            response.headers["X-Cache"] = g.cache
+        return response
 
     @app.errorhandler(ApiError)
     def api_error(err):

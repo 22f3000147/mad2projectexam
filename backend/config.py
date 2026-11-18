@@ -17,7 +17,12 @@ class Config:
     CELERY_RESULT_BACKEND = REDIS_URL + "/1"
     TIMEZONE = os.environ.get("TIMEZONE", "Asia/Kolkata")
 
-    REMINDER_HOUR = int(os.environ.get("REMINDER_HOUR", 8))       
+    CACHE_URL = REDIS_URL + "/2"
+    CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() != "false"
+    CACHE_TTL_SHORT = int(os.environ.get("CACHE_TTL_SHORT", 60))    
+    CACHE_TTL_LONG = int(os.environ.get("CACHE_TTL_LONG", 600))     
+
+    REMINDER_HOUR = int(os.environ.get("REMINDER_HOUR", 8))        
     REMINDER_MINUTE = int(os.environ.get("REMINDER_MINUTE", 0))
     REPORT_DAY = int(os.environ.get("REPORT_DAY", 1))              
     REPORT_HOUR = int(os.environ.get("REPORT_HOUR", 7))

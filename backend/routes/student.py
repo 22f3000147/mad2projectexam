@@ -12,6 +12,8 @@ from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_int, need_text, show_dt, get_or_404, refresh_slot)
 from utils.validators import PHONE_RE
 from utils.jobs import start_job, job_status
+from utils.cache import remember
+from utils.queries import exam_rubrics
 from tasks import export_history_csv
 from config import Config
 
@@ -23,16 +25,20 @@ def starts_at(slot):
     return datetime.combine(slot.date, slot.start_time)
 
 
-def booking_state(exam):
-    """Is student booking open for this exam right now? -> (True/False, reason)"""
-    if exam.status != EXAM_BOOKING_OPEN:
+def window_state(status, start, end):
+    """Is booking open? start / end are ISO strings (or None) so cached data can use this too."""
+    if status != EXAM_BOOKING_OPEN:
         return False, "Booking is not open"
     now = datetime.now()         
-    if exam.booking_start and now < exam.booking_start:
-        return False, f"Booking opens {exam.booking_start:%d %b %H:%M}"
-    if exam.booking_end and now > exam.booking_end:
-        return False, f"Booking closed {exam.booking_end:%d %b %H:%M}"
+    if start and now < datetime.fromisoformat(start):
+        return False, f"Booking opens {datetime.fromisoformat(start):%d %b %H:%M}"
+    if end and now > datetime.fromisoformat(end):
+        return False, f"Booking closed {datetime.fromisoformat(end):%d %b %H:%M}"
     return True, ""
+
+
+def booking_state(exam):
+    return window_state(exam.status, show_dt(exam.booking_start), show_dt(exam.booking_end))
 
 
 def my_bookings():
@@ -45,20 +51,21 @@ def held_by_exam(bookings):
 
 
 def slot_state(slot, held, bookings):
-    """Can this student book this slot? -> (True/False, reason)"""
-    ok, note = booking_state(slot.examination)
+    """Can this student book this slot? slot is the plain dict from slot_base(). -> (True/False, reason)"""
+    ok, note = window_state(slot["exam_status"], slot["booking_start"], slot["booking_end"])
     if not ok:
         return False, note
-    mine = held.get(slot.examination_id)
+    mine = held.get(slot["examination_id"])
     if mine:
-        return False, "Booked by you" if mine.slot_id == slot.id else "You already booked this exam"
-    if slot.status != SLOT_AVAILABLE or slot.available_seats < 1:
+        return False, "Booked by you" if mine.slot_id == slot["id"] else "You already booked this exam"
+    if slot["status"] != SLOT_AVAILABLE or slot["available_seats"] < 1:
         return False, "Slot is full"
-    if starts_at(slot) <= datetime.now():
+    if datetime.fromisoformat(f"{slot['date']}T{slot['start_time']}") <= datetime.now():
         return False, "Slot has already started"
     for b in bookings:
         o = b.slot
-        if b.status == BOOKING_BOOKED and o.date == slot.date and slot.start_time < o.end_time and slot.end_time > o.start_time:
+        if (b.status == BOOKING_BOOKED and o.date.isoformat() == slot["date"]
+                and slot["start_time"] < o.end_time.strftime("%H:%M") and slot["end_time"] > o.start_time.strftime("%H:%M")):
             return False, "Clashes with another booking"
     return True, ""
 
@@ -82,37 +89,60 @@ def open_exams_query():
             .filter(Examination.status == EXAM_BOOKING_OPEN, Course.status == COURSE_ACTIVE))
 
 
-def exam_dict(e, held, detail=False):
-    ok, note = booking_state(e)
-    mine = held.get(e.id)
-    d = {
+def exam_base(e):
+    """The part of an exam that is the same for every student (this is what gets cached)."""
+    return {
         "id": e.id, "course_id": e.course_id, "course_code": e.course.code, "course_name": e.course.name,
         "name": e.name, "exam_type": e.exam_type, "duration_minutes": e.duration_minutes,
         "max_marks": e.max_marks, "status": e.status,
         "booking_start": show_dt(e.booking_start), "booking_end": show_dt(e.booking_end),
         "open_slots": len([s for s in e.slots if s.status == SLOT_AVAILABLE and s.available_seats > 0]),
-        "booked": bool(mine), "my_slot": f"{mine.slot.date} {mine.slot.start_time:%H:%M}" if mine else None,
-        "bookable": ok and not mine, "note": "You have booked this exam" if mine else note,
     }
-    if detail:
-        d["instructions"] = e.instructions
-        d["rubrics"] = [{"criterion_name": r.criterion_name, "max_marks": r.max_marks,
-                         "description": r.description} for r in e.rubrics]
-    return d
 
 
-def slot_dict(s, held, bookings):
-    can, note = slot_state(s, held, bookings)
-    mine = held.get(s.examination_id)
-    mine = mine if mine and mine.slot_id == s.id and mine.status == BOOKING_BOOKED else None
+def open_exams_base():
+    """All exams open for booking, cached. Search/filter + per-student flags are applied after."""
+    return remember("exams:open", Config.CACHE_TTL_SHORT,
+                    lambda: [exam_base(e) for e in open_exams_query().order_by(Examination.id).all()])
+
+
+def personal_exam(base, held):
+    """Cached exam + what is different for THIS student (already booked? can book now?)."""
+    ok, note = window_state(base["status"], base["booking_start"], base["booking_end"])
+    mine = held.get(base["id"])
+    return {**base, "booked": bool(mine),
+            "my_slot": f"{mine.slot.date} {mine.slot.start_time:%H:%M}" if mine else None,
+            "bookable": ok and not mine, "note": "You have booked this exam" if mine else note}
+
+
+def slot_base(s):
+    """The part of a slot that is the same for every student (this is what gets cached)."""
+    e = s.examination
+    return {"id": s.id, "examination_id": s.examination_id, "exam_name": e.name, "course_code": e.course.code,
+            "examiner_name": s.examiner.full_name, "date": s.date.isoformat(),
+            "start_time": s.start_time.strftime("%H:%M"), "end_time": s.end_time.strftime("%H:%M"),
+            "max_capacity": s.max_capacity, "available_seats": s.available_seats, "status": s.status,
+            "meeting_link": s.meeting_link, "exam_status": e.status,
+            "booking_start": show_dt(e.booking_start), "booking_end": show_dt(e.booking_end)}
+
+
+def open_slots_base():
+    """The exam schedule: every bookable/full slot of the exams open for booking, cached."""
+    def build():
+        slots = [slot_base(s) for e in open_exams_query().all() for s in e.slots
+                 if s.status in (SLOT_AVAILABLE, SLOT_FULL)]
+        return sorted(slots, key=lambda d: (d["date"], d["start_time"]))
+    return remember("slots:open", Config.CACHE_TTL_SHORT, build)
+
+
+def personal_slot(base, held, bookings):
+    can, note = slot_state(base, held, bookings)
+    mine = held.get(base["examination_id"])
+    mine = mine if mine and mine.slot_id == base["id"] and mine.status == BOOKING_BOOKED else None
     can_cancel, cancel_note = cancel_state(mine) if mine else (False, "")
-    return {"id": s.id, "examination_id": s.examination_id, "exam_name": s.examination.name,
-            "course_code": s.examination.course.code, "examiner_name": s.examiner.full_name,
-            "date": s.date.isoformat(), "start_time": s.start_time.strftime("%H:%M"),
-            "end_time": s.end_time.strftime("%H:%M"), "max_capacity": s.max_capacity,
-            "available_seats": s.available_seats, "status": s.status, "meeting_link": s.meeting_link,
-            "can_book": can, "note": note,
-            "my_booking_id": mine.id if mine else None, "can_cancel": can_cancel, "cancel_note": cancel_note}
+    shown = {k: v for k, v in base.items() if k not in ("exam_status", "booking_start", "booking_end")}
+    return {**shown, "can_book": can, "note": note, "my_booking_id": mine.id if mine else None,
+            "can_cancel": can_cancel, "cancel_note": cancel_note}
 
 
 def booking_dict(b):
@@ -145,11 +175,11 @@ def booking_dict(b):
 def dashboard():
     bookings = my_bookings()
     held = held_by_exam(bookings)
-    exams = open_exams_query().all()
-    slots = [s for e in exams for s in e.slots]
     now = datetime.now()
+    exams, slots = open_exams_base(), open_slots_base()
     return jsonify(
-        available_exams=len([e for e in exams if e.id not in held and booking_state(e)[0]]),
+        available_exams=len([e for e in exams if e["id"] not in held
+                             and window_state(e["status"], e["booking_start"], e["booking_end"])[0]]),
         available_slots=len([s for s in slots if slot_state(s, held, bookings)[0]]),
         upcoming=len([b for b in bookings if b.status == BOOKING_BOOKED and starts_at(b.slot) > now]),
         results=len([b for b in bookings if b.evaluation and b.evaluation.status == EVAL_PUBLISHED]),
@@ -159,35 +189,42 @@ def dashboard():
 @student_bp.get("/courses")
 @student_only
 def list_courses():
-    courses = {e.course_id: e.course for e in open_exams_query().all()}
-    return jsonify([{"id": c.id, "code": c.code, "name": c.name} for c in courses.values()])
+    courses = {e["course_id"]: {"id": e["course_id"], "code": e["course_code"], "name": e["course_name"]}
+               for e in open_exams_base()}
+    return jsonify(list(courses.values()))
 
 
 @student_bp.get("/exams")
 @student_only
 def list_exams():
-    """Available exams (booking open) with search + filters."""
-    query = open_exams_query()
-    q = request.args.get("q", "").strip()
-    if q:
-        like = f"%{q}%"
-        query = query.filter(or_(Examination.name.ilike(like), Course.code.ilike(like), Course.name.ilike(like)))
-    if request.args.get("exam_type"):
-        query = query.filter(Examination.exam_type == request.args["exam_type"])
-    if request.args.get("course_id"):
-        query = query.filter(Examination.course_id == int(request.args["course_id"]))
+    """Available exams (booking open) with search + filters. Filtering is done on the cached list."""
+    q = request.args.get("q", "").strip().lower()
+    exam_type = request.args.get("exam_type")
+    course_id = int(request.args["course_id"]) if request.args.get("course_id") else None
     held = held_by_exam(my_bookings())
-    return jsonify([exam_dict(e, held) for e in query.order_by(Examination.id).all()])
+    rows = []
+    for e in open_exams_base():
+        if q and not any(q in e[k].lower() for k in ("name", "course_code", "course_name")):
+            continue
+        if exam_type and e["exam_type"] != exam_type:
+            continue
+        if course_id and e["course_id"] != course_id:
+            continue
+        rows.append(personal_exam(e, held))
+    return jsonify(rows)
 
 
 @student_bp.get("/exams/<int:exam_id>")
 @student_only
 def exam_detail(exam_id):
     exam = get_or_404(Examination, exam_id, "Examination")
-    held = held_by_exam(my_bookings())
-    if exam.status != EXAM_BOOKING_OPEN and exam.id not in {b.examination_id for b in my_bookings()}:
+    bookings = my_bookings()
+    if exam.status != EXAM_BOOKING_OPEN and exam.id not in {b.examination_id for b in bookings}:
         raise ApiError("Examination not found", 404)
-    return jsonify(exam_dict(exam, held, detail=True))
+    detail = personal_exam(exam_base(exam), held_by_exam(bookings))
+    detail["instructions"] = exam.instructions
+    detail["rubrics"] = exam_rubrics(exam.id)        
+    return jsonify(detail)
 
 
 @student_bp.get("/slots")
@@ -195,13 +232,9 @@ def exam_detail(exam_id):
 def list_slots():
     bookings = my_bookings()
     held = held_by_exam(bookings)
-    slots = []
-    for e in open_exams_query().all():
-        if request.args.get("exam_id") and e.id != int(request.args["exam_id"]):
-            continue
-        slots += [s for s in e.slots if s.status in (SLOT_AVAILABLE, SLOT_FULL)]
-    slots.sort(key=lambda s: (s.date, s.start_time))
-    return jsonify([slot_dict(s, held, bookings) for s in slots])
+    exam_id = int(request.args["exam_id"]) if request.args.get("exam_id") else None
+    return jsonify([personal_slot(s, held, bookings) for s in open_slots_base()
+                    if not exam_id or s["examination_id"] == exam_id])
 
 
 @student_bp.post("/bookings")
@@ -209,7 +242,7 @@ def list_slots():
 def book_slot():
     slot = get_or_404(ExaminationSlot, need_int(body(), "slot_id", "Slot"), "Slot")
     bookings = my_bookings()
-    ok, reason = slot_state(slot, held_by_exam(bookings), bookings)
+    ok, reason = slot_state(slot_base(slot), held_by_exam(bookings), bookings)
     if not ok:
         raise ApiError(reason, 409)
     taken = ExaminationSlot.query.filter(
@@ -226,7 +259,7 @@ def book_slot():
     except IntegrityError:              
         db.session.rollback()
         raise ApiError("You already booked this exam", 409)
-    refresh_slot(slot)                  
+    refresh_slot(slot)                 
     db.session.commit()
     return jsonify(booking_dict(booking)), 201
 
@@ -242,7 +275,7 @@ def cancel_booking(booking_id):
         raise ApiError(reason or "This booking cannot be cancelled", 409)
     booking.status = BOOKING_CANCELLED
     db.session.flush()
-    refresh_slot(booking.slot)         
+    refresh_slot(booking.slot)          
     db.session.commit()
     return jsonify(booking_dict(booking))
 

@@ -42,14 +42,60 @@ const AdminReports = {
         </div>
       </div>
     </div>
+    <div class="col-12">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-bold text-danger">Redis cache</span>
+          <div>
+            <button class="btn btn-sm btn-outline-secondary me-1" @click="loadCache">Refresh</button>
+            <button class="btn btn-sm btn-outline-danger" :disabled="!cache || !cache.enabled" @click="clearCache">Clear cache</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div v-if="cacheError" class="alert alert-danger py-2">{{ cacheError }}</div>
+          <div v-if="cache && !cache.enabled" class="alert alert-warning py-2 mb-0">Redis cache is not available. The app works without it, just slower.</div>
+          <div v-if="cache && cache.enabled">
+            <p class="small text-muted mb-2">Exams, the exam schedule, rubrics and dashboard counts are cached. A value is refreshed automatically when its data changes, and expires on its own after 1 to 10 minutes.</p>
+            <div class="row g-2 mb-2 text-center">
+              <div class="col-4"><div class="border rounded py-1"><div class="fs-5 fw-bold">{{ cache.hits }}</div><div class="small text-muted">Hits</div></div></div>
+              <div class="col-4"><div class="border rounded py-1"><div class="fs-5 fw-bold">{{ cache.misses }}</div><div class="small text-muted">Misses</div></div></div>
+              <div class="col-4"><div class="border rounded py-1"><div class="fs-5 fw-bold">{{ hitRate }}</div><div class="small text-muted">Hit rate</div></div></div>
+            </div>
+            <table class="table table-sm mb-0">
+              <thead><tr><th>Cached value</th><th>Expires in</th></tr></thead>
+              <tbody>
+                <tr v-for="k in cache.keys" :key="k.key"><td>{{ k.key }}</td><td>{{ k.ttl }} s</td></tr>
+                <tr v-if="!cache.keys.length"><td colspan="2" class="text-muted text-center">No cached values right now</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>`,
   data() {
     const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);        // default = last month
     return { month: d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'),
-             report: { running: false, result: null, error: '' }, reminder: { running: false, result: null, error: '' } };
+             report: { running: false, result: null, error: '' }, reminder: { running: false, result: null, error: '' },
+             cache: null, cacheError: '' };
   },
+  computed: {
+    hitRate() {
+      const total = this.cache ? this.cache.hits + this.cache.misses : 0;
+      return total ? Math.round(this.cache.hits * 100 / total) + '%' : '-';
+    },
+  },
+  mounted() { this.loadCache(); },
   beforeUnmount() { this.gone = true; },
   methods: {
+    async loadCache() {
+      try { this.cache = await API.get('/admin/cache'); this.cacheError = ''; }
+      catch (e) { this.cacheError = e.message; }
+    },
+    async clearCache() {
+      try { this.cache = await API.post('/admin/cache/clear'); this.cacheError = ''; }
+      catch (e) { this.cacheError = e.message; }
+    },
     async track(target, start) {
       target.running = true; target.result = null; target.error = '';
       try {

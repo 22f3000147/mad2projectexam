@@ -15,6 +15,8 @@ from utils.helpers import (ApiError, body, need_text, need_int, opt_dt, need_dat
 from utils.mail import send_mail
 from utils.validators import EMAIL_RE
 from utils.jobs import start_job, job_status
+from utils.cache import remember, cache_info, clear_all
+from utils.queries import rubric_dict, exam_rubrics
 from tasks import send_daily_reminders, send_monthly_report
 from config import Config
 
@@ -58,11 +60,6 @@ def exam_dict(e):
     }
 
 
-def rubric_dict(r):
-    return {"id": r.id, "examination_id": r.examination_id, "criterion_name": r.criterion_name,
-            "max_marks": r.max_marks, "weightage": r.weightage, "description": r.description}
-
-
 def examiner_dict(u):
     p = u.examiner_profile
     return {"id": u.id, "name": p.name, "email": u.email, "contact_details": p.contact_details,
@@ -101,14 +98,12 @@ def booking_dict(b):
 @admin_bp.get("/dashboard")
 @admin_only
 def dashboard():
-    return jsonify(
-        courses=Course.query.count(),
-        examinations=Examination.query.count(),
-        examiners=User.query.filter_by(role=ROLE_EXAMINER).count(),
-        students=User.query.filter_by(role=ROLE_STUDENT).count(),
-        slots=ExaminationSlot.query.count(),
-        bookings=Booking.query.count(),
-    )
+    def count_everything():
+        return {"courses": Course.query.count(), "examinations": Examination.query.count(),
+                "examiners": User.query.filter_by(role=ROLE_EXAMINER).count(),
+                "students": User.query.filter_by(role=ROLE_STUDENT).count(),
+                "slots": ExaminationSlot.query.count(), "bookings": Booking.query.count()}
+    return jsonify(remember("stats:admin", Config.CACHE_TTL_SHORT, count_everything))
 
 
 def fill_course(course, data):
@@ -157,7 +152,7 @@ def delete_course(course_id):
         .filter(Examination.course_id == course.id).first()
     if has_bookings:
         raise ApiError("This course has exam bookings. Mark it Inactive instead of deleting.", 409)
-    db.session.delete(course)     
+    db.session.delete(course)    
     db.session.commit()
     return jsonify(message="Course deleted")
 
@@ -240,7 +235,7 @@ def change_exam_status(exam_id):
     if new_status == EXAM_BOOKING_OPEN and not any(s.status == SLOT_AVAILABLE for s in exam.slots):
         raise ApiError("Create at least one available slot before opening booking")
     if new_status == EXAM_COMPLETED:
-        finish_exam(exam)            
+        finish_exam(exam)          
     else:
         exam.status = new_status
     db.session.commit()
@@ -304,8 +299,8 @@ def fill_rubric(rubric, exam, data):
 @admin_only
 def list_rubrics(exam_id):
     exam = get_or_404(Examination, exam_id, "Examination")
-    return jsonify(rubrics=[rubric_dict(r) for r in exam.rubrics],
-                   total=sum(r.max_marks for r in exam.rubrics), exam_max=exam.max_marks)
+    rubrics = exam_rubrics(exam.id)
+    return jsonify(rubrics=rubrics, total=sum(r["max_marks"] for r in rubrics), exam_max=exam.max_marks)
 
 
 @admin_bp.post("/exams/<int:exam_id>/rubrics")
@@ -377,7 +372,7 @@ def create_examiner():
 
     user = User(email=email, full_name=name, role=ROLE_EXAMINER,
                 department=(data.get("department") or "").strip() or None)
-    user.set_password(secrets.token_urlsafe(12))     
+    user.set_password(secrets.token_urlsafe(12))    
     user.examiner_profile = ExaminerProfile(
         name=name, status=status, department=user.department,
         contact_details=(data.get("contact_details") or "").strip() or None)
@@ -644,3 +639,17 @@ def get_report(filename):
     if not re.fullmatch(r"monthly_\d{4}_\d{2}\.html", filename) or not os.path.exists(path):
         raise ApiError("Report not found", 404)
     return send_file(path, mimetype="text/html")
+
+
+@admin_bp.get("/cache")
+@admin_only
+def cache_status():
+    return jsonify(cache_info())
+
+
+@admin_bp.post("/cache/clear")
+@admin_only
+def cache_clear():
+    """Manual refresh: drop every cached value, the next requests rebuild them."""
+    clear_all()
+    return jsonify(cache_info())

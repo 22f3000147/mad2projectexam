@@ -9,6 +9,7 @@ from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_int, need_date, need_time, show_dt,
                            get_or_404, refresh_slot, count_booked, finish_exam)
 from routes.admin import slot_dict, overlaps
+from utils.queries import exam_rubrics
 
 examiner_bp = Blueprint("examiner", __name__)
 examiner_only = roles_required(ROLE_EXAMINER)
@@ -222,9 +223,7 @@ def evaluation_dict(booking):
     return {
         "booking": my_booking_dict(booking),
         "exam_max": exam.max_marks,
-        "rubrics": [{"id": r.id, "criterion_name": r.criterion_name, "max_marks": r.max_marks,
-                     "weightage": r.weightage, "description": r.description,
-                     "awarded": given.get(r.id)} for r in exam.rubrics],
+        "rubrics": [{**r, "awarded": given.get(r["id"])} for r in exam_rubrics(exam.id)],
         "remarks": ev.remarks if ev else "",
         "status": ev.status if ev else "Pending",
         "total": ev.total_marks if ev else 0,
@@ -292,7 +291,7 @@ def save_evaluation(booking_id):
             existing[rid].awarded_marks = value
         else:
             ev.scores.append(EvaluationScore(rubric_id=rid, awarded_marks=value))
-    for rid, sc in existing.items():        
+    for rid, sc in existing.items():         
         if rid not in marks:
             ev.scores.remove(sc)
     ev.remarks = remarks or None
