@@ -1,4 +1,3 @@
-
 const AdminDashboard = {
   template: `
   <div>
@@ -26,6 +25,7 @@ const AdminDashboard = {
         { to: '/admin/students', label: 'Students' },
         { to: '/admin/slots', label: 'Slots' },
         { to: '/admin/bookings', label: 'Registered Students' },
+        { to: '/admin/reports', label: 'Reports' },
       ],
     };
   },

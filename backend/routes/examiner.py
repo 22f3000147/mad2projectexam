@@ -39,7 +39,7 @@ def creation_state(exam):
     """Can the examiner create slots right now? -> (True/False, reason)"""
     if exam.status != EXAM_SLOT_CREATION:
         return False, "Slot creation is not open"
-    now = datetime.now()          # admin enters timelines in local time
+    now = datetime.now()         
     if exam.slot_creation_start and now < exam.slot_creation_start:
         return False, f"Slot creation opens {exam.slot_creation_start:%d %b %H:%M}"
     if exam.slot_creation_end and now > exam.slot_creation_end:
@@ -292,7 +292,7 @@ def save_evaluation(booking_id):
             existing[rid].awarded_marks = value
         else:
             ev.scores.append(EvaluationScore(rubric_id=rid, awarded_marks=value))
-    for rid, sc in existing.items():          # a cleared box removes that score
+    for rid, sc in existing.items():        
         if rid not in marks:
             ev.scores.remove(sc)
     ev.remarks = remarks or None

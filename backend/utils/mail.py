@@ -4,7 +4,7 @@ import smtplib
 from email.message import EmailMessage
 
 
-def send_mail(to, subject, text):
+def send_mail(to, subject, text, html=None):
     host = os.environ.get("MAIL_SERVER")
     if not host:
         print(f"[MAIL not configured] to={to} subject={subject}\n{text}\n")
@@ -15,6 +15,8 @@ def send_mail(to, subject, text):
         msg["To"] = to
         msg["Subject"] = subject
         msg.set_content(text)
+        if html:
+            msg.add_alternative(html, subtype="html")
         with smtplib.SMTP(host, int(os.environ.get("MAIL_PORT", 587)), timeout=10) as server:
             server.starttls()
             if os.environ.get("MAIL_USERNAME"):

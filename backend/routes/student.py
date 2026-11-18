@@ -1,6 +1,8 @@
 """Student APIs: browse exams, book / cancel slots, upcoming + history, profile."""
 from datetime import datetime
-from flask import Blueprint, jsonify, request, g
+import os
+import re
+from flask import Blueprint, jsonify, request, g, send_file
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from extensions import db
@@ -9,12 +11,14 @@ from models.constants import *
 from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_int, need_text, show_dt, get_or_404, refresh_slot)
 from utils.validators import PHONE_RE
+from utils.jobs import start_job, job_status
+from tasks import export_history_csv
+from config import Config
 
 student_bp = Blueprint("student", __name__)
 student_only = roles_required(ROLE_STUDENT)
 
 
-# ------------------------------------------------------------- rule helpers
 def starts_at(slot):
     return datetime.combine(slot.date, slot.start_time)
 
@@ -23,7 +27,7 @@ def booking_state(exam):
     """Is student booking open for this exam right now? -> (True/False, reason)"""
     if exam.status != EXAM_BOOKING_OPEN:
         return False, "Booking is not open"
-    now = datetime.now()          # admin enters timelines in local time
+    now = datetime.now()         
     if exam.booking_start and now < exam.booking_start:
         return False, f"Booking opens {exam.booking_start:%d %b %H:%M}"
     if exam.booking_end and now > exam.booking_end:
@@ -78,7 +82,6 @@ def open_exams_query():
             .filter(Examination.status == EXAM_BOOKING_OPEN, Course.status == COURSE_ACTIVE))
 
 
-# ------------------------------------------------------------- dict helpers
 def exam_dict(e, held, detail=False):
     ok, note = booking_state(e)
     mine = held.get(e.id)
@@ -116,7 +119,7 @@ def booking_dict(b):
     s, e, ev = b.slot, b.examination, b.evaluation
     can_cancel, cancel_note = cancel_state(b)
     result = None
-    if ev and ev.status == EVAL_PUBLISHED:          # marks + feedback only after admin publishes
+    if ev and ev.status == EVAL_PUBLISHED:         
         result = {"total": ev.total_marks, "max": e.max_marks, "remarks": ev.remarks,
                   "date": show_dt(ev.evaluation_date),
                   "examiner": ev.examiner.full_name,
@@ -137,7 +140,6 @@ def booking_dict(b):
             "result_status": result_status, "result": result}
 
 
-# ---------------------------------------------------------------- dashboard
 @student_bp.get("/dashboard")
 @student_only
 def dashboard():
@@ -154,7 +156,6 @@ def dashboard():
     )
 
 
-# -------------------------------------------------------------------- exams
 @student_bp.get("/courses")
 @student_only
 def list_courses():
@@ -189,7 +190,6 @@ def exam_detail(exam_id):
     return jsonify(exam_dict(exam, held, detail=True))
 
 
-# -------------------------------------------------------------------- slots
 @student_bp.get("/slots")
 @student_only
 def list_slots():
@@ -204,7 +204,6 @@ def list_slots():
     return jsonify([slot_dict(s, held, bookings) for s in slots])
 
 
-# ----------------------------------------------------------------- bookings
 @student_bp.post("/bookings")
 @student_only
 def book_slot():
@@ -213,7 +212,6 @@ def book_slot():
     ok, reason = slot_state(slot, held_by_exam(bookings), bookings)
     if not ok:
         raise ApiError(reason, 409)
-    # take a seat atomically so two students can never overbook the last seat
     taken = ExaminationSlot.query.filter(
         ExaminationSlot.id == slot.id, ExaminationSlot.status == SLOT_AVAILABLE,
         ExaminationSlot.available_seats > 0
@@ -225,10 +223,10 @@ def book_slot():
     db.session.add(booking)
     try:
         db.session.flush()
-    except IntegrityError:               # unique index: one active booking per exam
+    except IntegrityError:              
         db.session.rollback()
         raise ApiError("You already booked this exam", 409)
-    refresh_slot(slot)                   # recount seats, mark Full if needed
+    refresh_slot(slot)                  
     db.session.commit()
     return jsonify(booking_dict(booking)), 201
 
@@ -244,7 +242,7 @@ def cancel_booking(booking_id):
         raise ApiError(reason or "This booking cannot be cancelled", 409)
     booking.status = BOOKING_CANCELLED
     db.session.flush()
-    refresh_slot(booking.slot)           # seat is free again, slot back to Available
+    refresh_slot(booking.slot)         
     db.session.commit()
     return jsonify(booking_dict(booking))
 
@@ -263,7 +261,6 @@ def list_bookings():
     return jsonify([booking_dict(b) for b in rows])
 
 
-# ------------------------------------------------------------------ profile
 @student_bp.get("/profile")
 @student_only
 def get_profile():
@@ -290,3 +287,36 @@ def update_profile():
     me.department = (data.get("department") or "").strip() or None
     db.session.commit()
     return jsonify(me.to_dict())
+
+
+def export_path(task_id):
+    """Each student can only reach their own file: the name contains their id."""
+    if not re.fullmatch(r"[0-9a-f\-]{36}", task_id):
+        raise ApiError("Export not found", 404)
+    return os.path.join(Config.EXPORT_DIR, f"student_{g.current_user.id}_{task_id}.csv")
+
+
+@student_bp.post("/export")
+@student_only
+def start_export():
+    """Starts a Celery job; the student is alerted when it finishes."""
+    return jsonify(task_id=start_job(export_history_csv, g.current_user.id)), 202
+
+
+@student_bp.get("/export/<task_id>")
+@student_only
+def export_status(task_id):
+    path = export_path(task_id)
+    status = job_status(task_id)
+    ready = status["state"] == "SUCCESS" and os.path.exists(path)
+    return jsonify(state=status["state"], ready=ready, error=status["error"],
+                   rows=(status["result"] or {}).get("rows") if ready else None)
+
+
+@student_bp.get("/export/<task_id>/download")
+@student_only
+def export_download(task_id):
+    path = export_path(task_id)
+    if not os.path.exists(path):
+        raise ApiError("Export is not ready", 404)
+    return send_file(path, mimetype="text/csv", as_attachment=True, download_name="exam_history.csv")

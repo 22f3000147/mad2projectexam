@@ -1,7 +1,9 @@
 """All admin APIs in one file. Sections: dashboard, courses, exams, rubrics,
 examiners, students, slots, bookings, search."""
+import os
+import re
 import secrets
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import or_
 from extensions import db
 from models import (User, ExaminerProfile, Course, Examination, ExaminationRubric,
@@ -12,6 +14,9 @@ from utils.helpers import (ApiError, body, need_text, need_int, opt_dt, need_dat
                            show_dt, get_or_404, refresh_slot, count_booked, finish_exam)
 from utils.mail import send_mail
 from utils.validators import EMAIL_RE
+from utils.jobs import start_job, job_status
+from tasks import send_daily_reminders, send_monthly_report
+from config import Config
 
 admin_bp = Blueprint("admin", __name__)
 admin_only = roles_required(ROLE_ADMIN)
@@ -152,7 +157,7 @@ def delete_course(course_id):
         .filter(Examination.course_id == course.id).first()
     if has_bookings:
         raise ApiError("This course has exam bookings. Mark it Inactive instead of deleting.", 409)
-    db.session.delete(course)      # its exams, slots and rubrics go with it
+    db.session.delete(course)     
     db.session.commit()
     return jsonify(message="Course deleted")
 
@@ -235,7 +240,7 @@ def change_exam_status(exam_id):
     if new_status == EXAM_BOOKING_OPEN and not any(s.status == SLOT_AVAILABLE for s in exam.slots):
         raise ApiError("Create at least one available slot before opening booking")
     if new_status == EXAM_COMPLETED:
-        finish_exam(exam)             # same rule as the examiner: nobody left unevaluated
+        finish_exam(exam)            
     else:
         exam.status = new_status
     db.session.commit()
@@ -372,7 +377,7 @@ def create_examiner():
 
     user = User(email=email, full_name=name, role=ROLE_EXAMINER,
                 department=(data.get("department") or "").strip() or None)
-    user.set_password(secrets.token_urlsafe(12))      # real one is set when approved
+    user.set_password(secrets.token_urlsafe(12))     
     user.examiner_profile = ExaminerProfile(
         name=name, status=status, department=user.department,
         contact_details=(data.get("contact_details") or "").strip() or None)
@@ -608,3 +613,34 @@ def search():
                    examiners=[examiner_dict(u) for u in examiners],
                    exams=[exam_dict(e) for e in exams],
                    bookings=[booking_dict(b) for b in bookings])
+
+
+@admin_bp.post("/jobs/reminders")
+@admin_only
+def run_reminders():
+    """Run the daily reminder job right now (normally Celery Beat does it every morning)."""
+    return jsonify(task_id=start_job(send_daily_reminders)), 202
+
+
+@admin_bp.post("/jobs/monthly-report")
+@admin_only
+def run_monthly_report():
+    month = body().get("month") or None
+    if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        raise ApiError("Month must look like 2026-10")
+    return jsonify(task_id=start_job(send_monthly_report, month)), 202
+
+
+@admin_bp.get("/jobs/<task_id>")
+@admin_only
+def job_state(task_id):
+    return jsonify(job_status(task_id))
+
+
+@admin_bp.get("/reports/<filename>")
+@admin_only
+def get_report(filename):
+    path = os.path.join(Config.REPORT_DIR, filename)
+    if not re.fullmatch(r"monthly_\d{4}_\d{2}\.html", filename) or not os.path.exists(path):
+        raise ApiError("Report not found", 404)
+    return send_file(path, mimetype="text/html")

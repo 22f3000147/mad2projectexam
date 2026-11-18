@@ -12,6 +12,7 @@ const routes = [
       { path: 'students', component: AdminStudents },
       { path: 'slots', component: AdminSlots },
       { path: 'bookings', component: AdminBookings },
+      { path: 'reports', component: AdminReports },
       { path: 'search', component: AdminSearch },
     ],
   },

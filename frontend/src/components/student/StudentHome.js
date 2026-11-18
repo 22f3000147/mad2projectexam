@@ -1,5 +1,5 @@
 const StudentHome = {
-  components: { StudentSlots, StudentUpcoming },
+  components: { StudentSlots, StudentUpcoming, StudentExport },
   template: `
   <div>
     <div class="row g-2 mb-3">
@@ -11,6 +11,7 @@ const StudentHome = {
       </div>
     </div>
     <div v-if="error" class="alert alert-danger">{{ error }}</div>
+    <div class="mb-3"><student-export /></div>
     <student-slots :limit="5" @changed="refresh" />
     <student-upcoming :limit="5" :key="upcomingKey" />
   </div>`,

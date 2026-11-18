@@ -1,8 +1,11 @@
 const StudentHistory = {
-  components: { ExamDetail },
+  components: { ExamDetail, StudentExport },
   template: `
   <div class="card shadow-sm">
-    <div class="card-header fw-bold text-danger">History and Scores</div>
+    <div class="card-header d-flex justify-content-between align-items-start">
+      <span class="fw-bold text-danger">History and Scores</span>
+      <student-export />
+    </div>
     <div v-if="error" class="alert alert-danger m-2 py-2">{{ error }}</div>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0 align-middle">

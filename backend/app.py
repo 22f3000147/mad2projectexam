@@ -15,9 +15,9 @@ def create_app(config_class=Config):
     db.init_app(app)
     jwt.init_app(app)
 
-    import models  # noqa: F401  (register tables)
+    import models 
     with app.app_context():
-        db.create_all()          # DB is created programmatically - never by hand
+        db.create_all()         
         create_admin(app)
 
     from routes import register_blueprints
