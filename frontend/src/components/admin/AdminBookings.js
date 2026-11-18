@@ -43,7 +43,6 @@ const AdminBookings = {
         <select v-model="newSlot" class="form-select">
           <option value="" disabled>Select a slot</option>
           <option v-for="s in openSlots" :key="s.id" :value="s.id">
-            #{{ s.id }} {{ s.date }} {{ s.start_time }}-{{ s.end_time }} ({{ s.examiner_name }}, {{ s.available_seats }} seats left)
           </option>
         </select>
         <div v-if="!openSlots.length" class="form-text text-danger">No other open slots for this exam.</div>

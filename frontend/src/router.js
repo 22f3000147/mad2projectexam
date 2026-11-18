@@ -15,7 +15,16 @@ const routes = [
       { path: 'search', component: AdminSearch },
     ],
   },
-  { path: '/examiner', component: ExaminerDashboard, meta: { role: 'examiner' } },
+  {
+    path: '/examiner', component: ExaminerDashboard, meta: { role: 'examiner' },
+    children: [
+      { path: '', component: ExaminerHome },
+      { path: 'exams', component: ExaminerExams },
+      { path: 'slots', component: ExaminerSlots },
+      { path: 'bookings', component: ExaminerBookings },
+      { path: 'search', component: ExaminerSearch },
+    ],
+  },
   { path: '/student', component: StudentDashboard, meta: { role: 'student' } },
   { path: '/:pathMatch(.*)*', redirect: '/login' },
 ];
@@ -26,7 +35,6 @@ const router = VueRouter.createRouter({
 });
 
 const HOME = { admin: '/admin', examiner: '/examiner', student: '/student' };
-
 
 router.beforeEach((to) => {
   if (to.meta.guest) return authStore.isLoggedIn ? HOME[authStore.role] : true;

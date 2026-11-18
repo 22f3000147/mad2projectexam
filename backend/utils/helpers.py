@@ -3,7 +3,7 @@ from datetime import datetime, date, time
 from flask import request
 from extensions import db
 from models import Booking
-from models.constants import BOOKING_BOOKED, SLOT_AVAILABLE, SLOT_FULL
+from models.constants import BOOKING_BOOKED, BOOKING_COMPLETED, SLOT_AVAILABLE, SLOT_FULL
 
 
 class ApiError(Exception):
@@ -69,9 +69,17 @@ def get_or_404(model, item_id, label):
     return item
 
 
+def count_booked(slot):
+    """Students holding a seat = Booked + Completed (cancelled ones free the seat)."""
+    if slot.id is None:
+        return 0
+    return Booking.query.filter(Booking.slot_id == slot.id,
+                                Booking.status.in_((BOOKING_BOOKED, BOOKING_COMPLETED))).count()
+
+
 def refresh_slot(slot):
     """Recount seats from the bookings table and set Available/Full."""
-    booked = Booking.query.filter_by(slot_id=slot.id, status=BOOKING_BOOKED).count()
+    booked = count_booked(slot)
     slot.available_seats = max(slot.max_capacity - booked, 0)
     if slot.status in (SLOT_AVAILABLE, SLOT_FULL):
         slot.status = SLOT_FULL if slot.available_seats == 0 else SLOT_AVAILABLE

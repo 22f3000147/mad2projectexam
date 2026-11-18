@@ -9,13 +9,12 @@ from models import (User, ExaminerProfile, Course, Examination, ExaminationRubri
 from models.constants import *
 from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_text, need_int, opt_dt, need_date, need_time,
-                           show_dt, get_or_404, refresh_slot)
+                           show_dt, get_or_404, refresh_slot, count_booked)
 from utils.mail import send_mail
 from utils.validators import EMAIL_RE
 
 admin_bp = Blueprint("admin", __name__)
 admin_only = roles_required(ROLE_ADMIN)
-
 
 TRANSITIONS = {
     EXAM_DRAFT: [(EXAM_SLOT_CREATION, "Open slot creation")],
@@ -88,7 +87,6 @@ def booking_dict(b):
             "status": b.status, "evaluated": b.evaluation is not None}
 
 
-
 @admin_bp.get("/dashboard")
 @admin_only
 def dashboard():
@@ -151,7 +149,6 @@ def delete_course(course_id):
     db.session.delete(course)     
     db.session.commit()
     return jsonify(message="Course deleted")
-
 
 
 def fill_exam(exam, data):
@@ -247,14 +244,12 @@ def assign_examiners(exam_id):
         if not u or u.role != ROLE_EXAMINER or u.examiner_profile.status != EXAMINER_APPROVED:
             raise ApiError("Only approved examiners can be assigned")
         chosen.append(u)
-    
     for u in exam.examiners:
         if u.id not in ids and ExaminationSlot.query.filter_by(examination_id=exam.id, examiner_id=u.id).first():
             raise ApiError(f"{u.full_name} already has slots in this exam. Change the slot examiner first.", 409)
     exam.examiners = chosen
     db.session.commit()
     return jsonify(exam_dict(exam))
-
 
 
 def fill_rubric(rubric, exam, data):
@@ -310,7 +305,6 @@ def delete_rubric(rubric_id):
     db.session.delete(rubric)
     db.session.commit()
     return jsonify(message="Rubric deleted")
-
 
 
 def give_credentials(user):
@@ -396,7 +390,6 @@ def delete_examiner(user_id):
     return jsonify(message="Examiner removed")
 
 
-
 @admin_bp.get("/students")
 @admin_only
 def list_students():
@@ -419,7 +412,6 @@ def set_student_active(user_id):
     user.is_active = bool(body().get("is_active"))
     db.session.commit()
     return jsonify(student_dict(user))
-
 
 
 def overlaps(slot_id, examiner_id, day, start, end):
@@ -450,7 +442,7 @@ def fill_slot(slot, data):
     if overlaps(slot.id, examiner_id, day, start, end):
         raise ApiError("This examiner already has a slot at that time", 409)
 
-    booked = 0 if new else Booking.query.filter_by(slot_id=slot.id, status=BOOKING_BOOKED).count()
+    booked = count_booked(slot)
     if capacity < booked:
         raise ApiError(f"{booked} students are already booked, so capacity cannot be lower")
     status = data.get("status") or SLOT_AVAILABLE
@@ -510,7 +502,6 @@ def delete_slot(slot_id):
     return jsonify(message="Slot deleted")
 
 
-
 @admin_bp.get("/bookings")
 @admin_only
 def list_bookings():
@@ -548,7 +539,6 @@ def reschedule_booking(booking_id):
     refresh_slot(new_slot)
     db.session.commit()
     return jsonify(booking_dict(booking))
-
 
 
 @admin_bp.get("/search")
