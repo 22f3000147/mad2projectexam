@@ -25,7 +25,16 @@ const routes = [
       { path: 'search', component: ExaminerSearch },
     ],
   },
-  { path: '/student', component: StudentDashboard, meta: { role: 'student' } },
+  {
+    path: '/student', component: StudentDashboard, meta: { role: 'student' },
+    children: [
+      { path: '', component: StudentHome },
+      { path: 'exams', component: StudentExams },
+      { path: 'slots', component: StudentSlots },
+      { path: 'history', component: StudentHistory },
+      { path: 'profile', component: StudentProfile },
+    ],
+  },
   { path: '/:pathMatch(.*)*', redirect: '/login' },
 ];
 
