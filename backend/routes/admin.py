@@ -5,11 +5,11 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy import or_
 from extensions import db
 from models import (User, ExaminerProfile, Course, Examination, ExaminationRubric,
-                    ExaminationSlot, Booking, EvaluationScore)
+                    ExaminationSlot, Booking, Evaluation, EvaluationScore)
 from models.constants import *
 from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_text, need_int, opt_dt, need_date, need_time,
-                           show_dt, get_or_404, refresh_slot, count_booked)
+                           show_dt, get_or_404, refresh_slot, count_booked, finish_exam)
 from utils.mail import send_mail
 from utils.validators import EMAIL_RE
 
@@ -32,7 +32,11 @@ def course_dict(c):
 
 
 def exam_dict(e):
+    evals = [b.evaluation for s in e.slots for b in s.bookings if b.evaluation]
     return {
+        "evaluated_count": len(evals),
+        "unpublished_count": len([x for x in evals if x.status == EVAL_SUBMITTED]),
+        "results_published": e.results_published,
         "id": e.id, "course_id": e.course_id, "course_code": e.course.code,
         "course_name": e.course.name, "name": e.name, "exam_type": e.exam_type,
         "duration_minutes": e.duration_minutes, "max_marks": e.max_marks,
@@ -84,7 +88,9 @@ def booking_dict(b):
             "slot_id": s.id, "slot_date": s.date.isoformat(),
             "slot_start": s.start_time.strftime("%H:%M"), "slot_end": s.end_time.strftime("%H:%M"),
             "examiner_name": s.examiner.full_name, "booking_date": show_dt(b.booking_date),
-            "status": b.status, "evaluated": b.evaluation is not None}
+            "status": b.status, "evaluated": b.evaluation is not None, "max_marks": b.examination.max_marks,
+            "eval_status": b.evaluation.status if b.evaluation else "Pending",
+            "marks": b.evaluation.total_marks if b.evaluation and b.evaluation.status != EVAL_DRAFT else None}
 
 
 @admin_bp.get("/dashboard")
@@ -146,7 +152,7 @@ def delete_course(course_id):
         .filter(Examination.course_id == course.id).first()
     if has_bookings:
         raise ApiError("This course has exam bookings. Mark it Inactive instead of deleting.", 409)
-    db.session.delete(course)     
+    db.session.delete(course)      # its exams, slots and rubrics go with it
     db.session.commit()
     return jsonify(message="Course deleted")
 
@@ -228,9 +234,30 @@ def change_exam_status(exam_id):
         raise ApiError("Assign at least one examiner before opening slot creation")
     if new_status == EXAM_BOOKING_OPEN and not any(s.status == SLOT_AVAILABLE for s in exam.slots):
         raise ApiError("Create at least one available slot before opening booking")
-    exam.status = new_status
+    if new_status == EXAM_COMPLETED:
+        finish_exam(exam)             # same rule as the examiner: nobody left unevaluated
+    else:
+        exam.status = new_status
     db.session.commit()
     return jsonify(exam_dict(exam))
+
+
+@admin_bp.post("/exams/<int:exam_id>/publish")
+@admin_only
+def publish_results(exam_id):
+    """Students can see marks + remarks only after this."""
+    exam = get_or_404(Examination, exam_id, "Examination")
+    if exam.status != EXAM_COMPLETED:
+        raise ApiError("Complete the exam before publishing results")
+    to_publish = (Evaluation.query.join(Booking, Evaluation.booking_id == Booking.id)
+                  .filter(Booking.examination_id == exam.id, Evaluation.status == EVAL_SUBMITTED).all())
+    if not to_publish:
+        raise ApiError("There are no new results to publish")
+    for ev in to_publish:
+        ev.status = EVAL_PUBLISHED
+    exam.results_published = True
+    db.session.commit()
+    return jsonify(published=len(to_publish), exam=exam_dict(exam))
 
 
 @admin_bp.put("/exams/<int:exam_id>/examiners")
@@ -345,7 +372,7 @@ def create_examiner():
 
     user = User(email=email, full_name=name, role=ROLE_EXAMINER,
                 department=(data.get("department") or "").strip() or None)
-    user.set_password(secrets.token_urlsafe(12))     
+    user.set_password(secrets.token_urlsafe(12))      # real one is set when approved
     user.examiner_profile = ExaminerProfile(
         name=name, status=status, department=user.department,
         contact_details=(data.get("contact_details") or "").strip() or None)
@@ -508,6 +535,8 @@ def list_bookings():
     query = Booking.query.join(User, Booking.student_id == User.id)
     if request.args.get("exam_id"):
         query = query.filter(Booking.examination_id == int(request.args["exam_id"]))
+    if request.args.get("status"):
+        query = query.filter(Booking.status == request.args["status"])
     q = request.args.get("q", "").strip()
     if q:
         conditions = [User.full_name.ilike(f"%{q}%"), User.email.ilike(f"%{q}%")]
@@ -515,6 +544,20 @@ def list_bookings():
             conditions.append(User.id == int(q))
         query = query.filter(or_(*conditions))
     return jsonify([booking_dict(b) for b in query.order_by(Booking.id.desc()).all()])
+
+
+@admin_bp.get("/bookings/<int:booking_id>/evaluation")
+@admin_only
+def booking_evaluation(booking_id):
+    """Marks per criteria + remarks of one booking (admin can see drafts too)."""
+    booking = get_or_404(Booking, booking_id, "Booking")
+    ev = booking.evaluation
+    return jsonify(
+        booking=booking_dict(booking), status=ev.status if ev else "Pending",
+        total=ev.total_marks if ev else None, remarks=ev.remarks if ev else None,
+        examiner=ev.examiner.full_name if ev else None, date=show_dt(ev.evaluation_date) if ev else None,
+        scores=[{"criterion": sc.rubric.criterion_name, "awarded": sc.awarded_marks,
+                 "max": sc.rubric.max_marks} for sc in ev.scores] if ev else [])
 
 
 @admin_bp.put("/bookings/<int:booking_id>/reschedule")

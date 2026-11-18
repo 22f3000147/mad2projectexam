@@ -1,9 +1,9 @@
 import os
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from config import Config
 from extensions import db, jwt
 from seed import create_admin
-from utils.helpers import ApiError
+from utils.helpers import ApiError, close_expired_bookings
 
 
 def create_app(config_class=Config):
@@ -15,18 +15,22 @@ def create_app(config_class=Config):
     db.init_app(app)
     jwt.init_app(app)
 
-    import models  
+    import models  # noqa: F401  (register tables)
     with app.app_context():
-        db.create_all()          
+        db.create_all()          # DB is created programmatically - never by hand
         create_admin(app)
 
     from routes import register_blueprints
     register_blueprints(app)
 
-   
     @app.route("/")
     def index():
         return render_template("index.html")
+
+    @app.before_request
+    def keep_exam_status_updated():
+        if request.path.startswith("/api/") and not request.path.startswith("/api/auth/"):
+            close_expired_bookings()
 
     @app.errorhandler(ApiError)
     def api_error(err):

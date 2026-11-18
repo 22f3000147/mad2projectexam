@@ -2,8 +2,9 @@
 from datetime import datetime, date, time
 from flask import request
 from extensions import db
-from models import Booking
-from models.constants import BOOKING_BOOKED, BOOKING_COMPLETED, SLOT_AVAILABLE, SLOT_FULL
+from models import Booking, Examination
+from models.constants import (BOOKING_BOOKED, BOOKING_COMPLETED, SLOT_AVAILABLE, SLOT_FULL,
+                              SLOT_COMPLETED, EXAM_BOOKING_OPEN, EXAM_CLOSED, EXAM_COMPLETED)
 
 
 class ApiError(Exception):
@@ -83,3 +84,25 @@ def refresh_slot(slot):
     slot.available_seats = max(slot.max_capacity - booked, 0)
     if slot.status in (SLOT_AVAILABLE, SLOT_FULL):
         slot.status = SLOT_FULL if slot.available_seats == 0 else SLOT_AVAILABLE
+
+
+def finish_exam(exam):
+    """Mark an exam Completed (used by admin AND examiner). Every booked student must be evaluated."""
+    pending = Booking.query.filter_by(examination_id=exam.id, status=BOOKING_BOOKED).count()
+    if pending:
+        raise ApiError(f"{pending} student(s) are still waiting for evaluation")
+    exam.status = EXAM_COMPLETED
+    for slot in exam.slots:
+        if slot.status in (SLOT_AVAILABLE, SLOT_FULL):
+            slot.status = SLOT_COMPLETED
+
+
+def close_expired_bookings():
+    """Exams whose booking deadline has passed move from Booking Open to Closed."""
+    expired = Examination.query.filter(Examination.status == EXAM_BOOKING_OPEN,
+                                       Examination.booking_end.isnot(None),
+                                       Examination.booking_end < datetime.now()).all()
+    for exam in expired:
+        exam.status = EXAM_CLOSED
+    if expired:
+        db.session.commit()

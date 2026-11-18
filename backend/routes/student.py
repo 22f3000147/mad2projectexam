@@ -14,6 +14,7 @@ student_bp = Blueprint("student", __name__)
 student_only = roles_required(ROLE_STUDENT)
 
 
+# ------------------------------------------------------------- rule helpers
 def starts_at(slot):
     return datetime.combine(slot.date, slot.start_time)
 
@@ -22,7 +23,7 @@ def booking_state(exam):
     """Is student booking open for this exam right now? -> (True/False, reason)"""
     if exam.status != EXAM_BOOKING_OPEN:
         return False, "Booking is not open"
-    now = datetime.now()         
+    now = datetime.now()          # admin enters timelines in local time
     if exam.booking_start and now < exam.booking_start:
         return False, f"Booking opens {exam.booking_start:%d %b %H:%M}"
     if exam.booking_end and now > exam.booking_end:
@@ -77,6 +78,7 @@ def open_exams_query():
             .filter(Examination.status == EXAM_BOOKING_OPEN, Course.status == COURSE_ACTIVE))
 
 
+# ------------------------------------------------------------- dict helpers
 def exam_dict(e, held, detail=False):
     ok, note = booking_state(e)
     mine = held.get(e.id)
@@ -114,8 +116,9 @@ def booking_dict(b):
     s, e, ev = b.slot, b.examination, b.evaluation
     can_cancel, cancel_note = cancel_state(b)
     result = None
-    if ev and ev.status == EVAL_PUBLISHED:       
+    if ev and ev.status == EVAL_PUBLISHED:          # marks + feedback only after admin publishes
         result = {"total": ev.total_marks, "max": e.max_marks, "remarks": ev.remarks,
+                  "date": show_dt(ev.evaluation_date),
                   "examiner": ev.examiner.full_name,
                   "scores": [{"criterion": sc.rubric.criterion_name, "awarded": sc.awarded_marks,
                               "max": sc.rubric.max_marks} for sc in ev.scores]}
@@ -134,6 +137,7 @@ def booking_dict(b):
             "result_status": result_status, "result": result}
 
 
+# ---------------------------------------------------------------- dashboard
 @student_bp.get("/dashboard")
 @student_only
 def dashboard():
@@ -150,6 +154,7 @@ def dashboard():
     )
 
 
+# -------------------------------------------------------------------- exams
 @student_bp.get("/courses")
 @student_only
 def list_courses():
@@ -184,6 +189,7 @@ def exam_detail(exam_id):
     return jsonify(exam_dict(exam, held, detail=True))
 
 
+# -------------------------------------------------------------------- slots
 @student_bp.get("/slots")
 @student_only
 def list_slots():
@@ -198,6 +204,7 @@ def list_slots():
     return jsonify([slot_dict(s, held, bookings) for s in slots])
 
 
+# ----------------------------------------------------------------- bookings
 @student_bp.post("/bookings")
 @student_only
 def book_slot():
@@ -206,6 +213,7 @@ def book_slot():
     ok, reason = slot_state(slot, held_by_exam(bookings), bookings)
     if not ok:
         raise ApiError(reason, 409)
+    # take a seat atomically so two students can never overbook the last seat
     taken = ExaminationSlot.query.filter(
         ExaminationSlot.id == slot.id, ExaminationSlot.status == SLOT_AVAILABLE,
         ExaminationSlot.available_seats > 0
@@ -217,7 +225,7 @@ def book_slot():
     db.session.add(booking)
     try:
         db.session.flush()
-    except IntegrityError:                unique index: one active booking per exam
+    except IntegrityError:               # unique index: one active booking per exam
         db.session.rollback()
         raise ApiError("You already booked this exam", 409)
     refresh_slot(slot)                   # recount seats, mark Full if needed
@@ -255,6 +263,7 @@ def list_bookings():
     return jsonify([booking_dict(b) for b in rows])
 
 
+# ------------------------------------------------------------------ profile
 @student_bp.get("/profile")
 @student_only
 def get_profile():

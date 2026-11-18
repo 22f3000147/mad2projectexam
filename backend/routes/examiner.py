@@ -7,7 +7,7 @@ from models import User, Examination, ExaminationSlot, Booking, Evaluation, Eval
 from models.constants import *
 from utils.auth import roles_required
 from utils.helpers import (ApiError, body, need_int, need_date, need_time, show_dt,
-                           get_or_404, refresh_slot, count_booked)
+                           get_or_404, refresh_slot, count_booked, finish_exam)
 from routes.admin import slot_dict, overlaps
 
 examiner_bp = Blueprint("examiner", __name__)
@@ -39,7 +39,7 @@ def creation_state(exam):
     """Can the examiner create slots right now? -> (True/False, reason)"""
     if exam.status != EXAM_SLOT_CREATION:
         return False, "Slot creation is not open"
-    now = datetime.now()          
+    now = datetime.now()          # admin enters timelines in local time
     if exam.slot_creation_start and now < exam.slot_creation_start:
         return False, f"Slot creation opens {exam.slot_creation_start:%d %b %H:%M}"
     if exam.slot_creation_end and now > exam.slot_creation_end:
@@ -126,13 +126,7 @@ def complete_exam(exam_id):
     exam = my_exam(exam_id)
     if exam.status != EXAM_CLOSED:
         raise ApiError("The exam can be completed only after booking is closed")
-    pending = Booking.query.filter_by(examination_id=exam.id, status=BOOKING_BOOKED).count()
-    if pending:
-        raise ApiError(f"{pending} student(s) are still waiting for evaluation")
-    exam.status = EXAM_COMPLETED
-    for slot in exam.slots:
-        if slot.status in (SLOT_AVAILABLE, SLOT_FULL):
-            slot.status = SLOT_COMPLETED
+    finish_exam(exam)
     db.session.commit()
     return jsonify(exam_dict(exam))
 
@@ -298,7 +292,7 @@ def save_evaluation(booking_id):
             existing[rid].awarded_marks = value
         else:
             ev.scores.append(EvaluationScore(rubric_id=rid, awarded_marks=value))
-    for rid, sc in existing.items():        
+    for rid, sc in existing.items():          # a cleared box removes that score
         if rid not in marks:
             ev.scores.remove(sc)
     ev.remarks = remarks or None

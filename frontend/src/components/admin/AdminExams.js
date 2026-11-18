@@ -29,6 +29,10 @@ const AdminExams = {
                   <button v-for="n in e.next" :key="n.to" class="btn btn-sm btn-outline-dark py-0 me-1 mb-1"
                           @click="changeStatus(e, n.to)">{{ n.label }}</button>
                 </div>
+                <div v-if="e.evaluated_count" class="small text-muted">Evaluated: {{ e.evaluated_count }}
+                  <span v-if="e.results_published && !e.unpublished_count" class="badge bg-primary">Results published</span></div>
+                <button v-if="e.status === 'Completed' && e.unpublished_count" class="btn btn-sm btn-primary py-0 mt-1"
+                        @click="publish(e)">Publish results ({{ e.unpublished_count }})</button>
               </td>
               <td>
                 <div class="d-flex flex-wrap gap-1">
@@ -46,7 +50,6 @@ const AdminExams = {
       </div>
     </div>
 
-    
     <modal-box :show="!!form" :title="form && form.id ? 'Edit Examination' : 'New Examination'" size="modal-lg" @close="form = null">
       <div v-if="formError" class="alert alert-danger py-2">{{ formError }}</div>
       <div v-if="form" class="row g-2">
@@ -82,7 +85,6 @@ const AdminExams = {
       </template>
     </modal-box>
 
-   
     <modal-box :show="!!rubricExam" :title="'Rubrics - ' + (rubricExam ? rubricExam.name : '')" size="modal-lg" @close="rubricExam = null">
       <div v-if="rubricError" class="alert alert-danger py-2">{{ rubricError }}</div>
       <table class="table table-sm align-middle">
@@ -113,7 +115,6 @@ const AdminExams = {
       <template #footer><button class="btn btn-secondary" @click="rubricExam = null">Close</button></template>
     </modal-box>
 
-    
     <modal-box :show="!!assignExam" :title="'Examiners - ' + (assignExam ? assignExam.name : '')" @close="assignExam = null">
       <div v-if="assignError" class="alert alert-danger py-2">{{ assignError }}</div>
       <div v-if="!approved.length" class="text-muted">No approved examiners yet. Add one in the Examiners table.</div>
@@ -178,7 +179,14 @@ const AdminExams = {
       catch (err) { this.fail(err); }
     },
 
-    
+    async publish(e) {
+      if (!confirm('Publish results of ' + e.name + '? Students will see their marks and remarks.')) return;
+      try {
+        const res = await API.post('/admin/exams/' + e.id + '/publish');
+        await this.done('Results published for ' + res.published + ' student(s)');
+      } catch (err) { this.fail(err); }
+    },
+
     async openRubrics(e) { this.rubricExam = e; this.rubricForm = this.blankRubric(); this.rubricError = ''; await this.loadRubrics(); },
     async loadRubrics() {
       const res = await API.get('/admin/exams/' + this.rubricExam.id + '/rubrics');
@@ -199,7 +207,6 @@ const AdminExams = {
       catch (e) { this.rubricError = e.message; }
     },
 
-    
     openAssign(e) { this.assignError = ''; this.assignExam = e; this.assignIds = e.examiners.map(x => x.id); },
     async saveAssign() {
       try {

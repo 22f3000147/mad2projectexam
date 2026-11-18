@@ -30,7 +30,7 @@ const StudentHistory = {
 
     <modal-box :show="!!shown" title="Result and feedback" @close="shown = null">
       <div v-if="shown && shown.result">
-        <p class="mb-2"><b>{{ shown.exam_name }}</b> ({{ shown.course_code }}) - examiner {{ shown.result.examiner }}</p>
+        <p class="mb-2"><b>{{ shown.exam_name }}</b> ({{ shown.course_code }}) - examiner {{ shown.result.examiner }}<br><span class="small text-muted">Evaluated on {{ $fmt(shown.result.date) }}</span></p>
         <table class="table table-sm">
           <thead><tr><th>Criteria</th><th>Awarded</th><th>Max</th></tr></thead>
           <tbody><tr v-for="s in shown.result.scores" :key="s.criterion">
