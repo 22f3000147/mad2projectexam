@@ -1,7 +1,7 @@
-"""Celery setup. Start with:
-    celery -A celery_app.celery worker --loglevel=info      (add --pool=solo on Windows)
-    celery -A celery_app.celery beat --loglevel=info        (the scheduler)
-"""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from celery import Celery
 from celery.schedules import crontab
 from config import Config
